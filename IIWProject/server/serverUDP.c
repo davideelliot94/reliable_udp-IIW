@@ -50,7 +50,8 @@ void get_funz(struct sockaddr_in* addr,socklen_t * dimaddr,int sockfds,size_t ad
 		char filename[1024] = {};
 		char buff[1024] = {};
 		struct stat stat_buf;
-		int fd,bytes_sent = 0,rc;
+		int fd,bytes_sent = 0,rcsend = 0,rcread = 0,totsend = 0;
+		unsigned int tmpread = 0;
 		size_t fsize;
 	/*ricevo il nome del file da client*/
 		puts("attendo nome del file");
@@ -81,16 +82,33 @@ void get_funz(struct sockaddr_in* addr,socklen_t * dimaddr,int sockfds,size_t ad
 		puts("dim file inviata\n");
 		if(bytes_sent == -1)
 			funz_error("Errore durante l'invio della dimensione del file\n");
+			/* 
+			 * provo a scrivere su un file locale*/
+			 
+		int fdlocale = open("pdflocale",O_CREAT | O_WRONLY ,0644 );
 	
-	
-		int controllo = read(fd,buff,fsize);
-		printf("contenuto %s\n",buff);
-		if(controllo == -1)
-			funz_error("Errore lettura file");
-		rc = sendto(sockfds,buff,strlen(buff), 0,(struct sockaddr*)addr,addrsize);
-		if(rc == -1)	
-			funz_error("Errore durante l'invio del file\n");
-		if(rc != stat_buf.st_size)
+		while(tmpread != fsize)
+		{
+			rcread = read(fd,buff,sizeof(buff));
+			printf("ho letto %d bytes\n",rcread);
+			if(rcread == -1)
+				funz_error("Errore lettura file");
+			tmpread += rcread;
+			printf("contenuto %s\n",buff);
+			/* scrivo su file locale */ 
+				
+				write(fdlocale,buff,rcread);
+			if(fsize - totsend > sizeof(buff))
+				rcsend = sendto(sockfds,buff,sizeof(buff), 0,(struct sockaddr*)addr,addrsize);
+			else
+				rcsend = sendto(sockfds,buff,fsize-totsend, 0,(struct sockaddr*)addr,addrsize);				
+			if(rcsend == -1)	
+				funz_error("Errore durante l'invio del file\n");
+			totsend += rcsend;
+			
+		}
+		printf("\n\ntnpread è %d\n\n mentre st_size è %zu\n\n ed totsend è %d \n\n",tmpread,stat_buf.st_size,totsend);	
+		if(totsend != stat_buf.st_size)
 			funz_error("Trasferimento incompleto\n");
 	
 		close(fd);
@@ -184,17 +202,21 @@ void post_funz(struct sockaddr_in* addr,socklen_t * dimaddr,int sockfds)
 		printf("Ho ricevuto dim in char %s\n",buff);
 		printf("dim file ricevuta %zu\n",dim);
 		puts("entro nel while");
+		
 		while(tmp != dim)
-		{
-			puts("attendo il server");
-			while((nread = recvfrom(sockfds,buff,sizeof(buff),0,(struct sockaddr*)addr,dimaddr)) > 0 ){
-				printf("Ho ricevuto cose %s\n",buff);
-				int v = write(fd,buff,nread);
-				if( v < 0 )
-					funz_error("Error writing on file\n");
-				tmp += nread;
-			}
-		}
+		{	
+			puts("sto per leggere\n");
+			nread = recvfrom(sockfds,buff,sizeof(buff),0,(struct sockaddr*)addr,dimaddr);
+			if(nread < 0)
+				funz_error("Error in recvfrom\n");
+	
+			printf("Ho ricevuto cose %s\n",buff);
+			printf("Ho letto nread = %d \n",nread);
+			int w = write(fd,buff,nread);
+			if(w < 0 )
+				funz_error("Error writing on file\n");
+			tmp += nread;
+    }
 		printf("File ricevuto\n");
 		close(fd);
 			
@@ -232,11 +254,11 @@ int main(int argc, char **argv)
 
 		if(strcasecmp(command,"GET") == 0)
 		{
+			
+				get_funz(&addr,&dimaddr,sockfds,sizeof(addr));
+				char * ip_address = inet_ntoa(cli_addr.sin_addr);
+				printf("IP del client: %s\n", ip_address);
 		
-			get_funz(&addr,&dimaddr,sockfds,sizeof(addr));
-			char * ip_address = inet_ntoa(cli_addr.sin_addr);
-			printf("IP del client: %s\n", ip_address);
-	
 		}
 	
 		if(strcasecmp(command,"LIST") == 0)

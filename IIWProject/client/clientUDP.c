@@ -29,9 +29,10 @@ void funz_error(char*mexerr,int type)
 
 void get_funz(char*command,char*filename,struct sockaddr* serv_addr,socklen_t* sock_len,size_t dim_serv,int sockfd)
 {
-	char nread = 0, buff[1024] = {};
-	int fd ;
+	int nread = 0;
 	unsigned int tmp = 0;
+	char buff[1024] = {};
+	int fd ;
 	size_t dim;
 	
 	strcpy(buff,command);
@@ -56,26 +57,29 @@ void get_funz(char*command,char*filename,struct sockaddr* serv_addr,socklen_t* s
         funz_error("Error opening file\n",0);
     }
     
-    int r = recvfrom(sockfd,buff,sizeof(buff),0,serv_addr,sock_len);
+    int r = recvfrom(sockfd,buff,strlen(buff)*sizeof(char),0,serv_addr,sock_len);
     if(r == -1)
         funz_error("Dimensione non arrivata\n",0);
     dim = atoi(buff);
     printf("Ho ricevuto dim in char %s\n",buff);
     printf("dim file ricevuta %zu\n",dim);
     puts("entro nel while");
+    printf("La dim del buffer è %d\n",sizeof(buff));
+    
     while(tmp != dim)
-    {
-        puts("attendo il server");
-        while((nread = recvfrom(sockfd,buff,sizeof(buff),0,serv_addr,sock_len)) > 0 ){
-            printf("Ho ricevuto cose %s\n",buff);
-            int w = write(fd,buff,nread);
-            if(w < 0 )
-				funz_error("Error writing on file\n",0);
-            tmp += nread;
-           }
-       
+    {	
+		puts("sto per leggere\n");
+        nread = recvfrom(sockfd,buff,sizeof(buff),0,serv_addr,sock_len);
+        if(nread < 0)
+			funz_error("Error in recvfrom\n",0);
+	
+        printf("Ho ricevuto cose %s\n",buff);
+        printf("Ho letto nread = %d \n",nread);
+        int w = write(fd,buff,nread);
+        if(w < 0 )
+			funz_error("Error writing on file\n",0);
+		tmp += nread;
     }
-
     printf("File ricevuto\n");
     close(fd);
 	
@@ -87,7 +91,8 @@ void post_funz(char*command,char*filename,struct sockaddr* serv_addr,size_t dim_
 	int fd ;
 	size_t fsize;
 	struct stat stat_buf;
-	int rc, bytes_sent;	
+	int rcread = 0,rcsend = 0, bytes_sent = 0,totsend = 0;	
+	unsigned int tmpread = 0;
 	
 	strcpy(buff,command);
 	printf("invio il comando -%s-\n",buff);
@@ -119,21 +124,36 @@ void post_funz(char*command,char*filename,struct sockaddr* serv_addr,size_t dim_
 		funz_error("Errore durante l'invio della dimensione del file\n",0);
 	
 	
-	int controllo = read(fd,buff,fsize);
-	printf("contenuto %s\n",buff);
-	if(controllo == -1)
-		funz_error("Errore lettura file\n",0);
-	rc = sendto(sockfd,buff,strlen(buff), 0,serv_addr,dim_serv);
-	if(rc == -1)	
-		funz_error("Errore durante l'invio del file\n",0);
-	if(rc != stat_buf.st_size)
+	while(tmpread != fsize)
+	{
+		rcread = read(fd,buff,sizeof(buff));
+		printf("ho letto %d bytes\n",rcread);
+		if(rcread == -1)
+			funz_error("Errore lettura file",1);
+		tmpread += rcread;
+		printf("contenuto %s\n",buff);
+		/* scrivo su file locale */ 
+		if(fsize - totsend > sizeof(buff))
+			rcsend = sendto(sockfd,buff,sizeof(buff), 0,serv_addr,dim_serv);
+		else
+			rcsend = sendto(sockfd,buff,fsize-totsend, 0,serv_addr,dim_serv);				
+		if(rcsend == -1)	
+			funz_error("Errore durante l'invio del file\n",1);
+		totsend += rcsend;
+			
+	}
+	
+	if(totsend != stat_buf.st_size)
 		funz_error("Trasferimento incompleto\n",0);
+	
+	close(fd);
 
 }
 
 void list_funz(char*command,struct sockaddr*serv_addr,socklen_t* sock_len,size_t dim_serv,int sockfd)
 {
-	char nread = 0, buff[1024] = {};
+	char buff[1024] = {};
+	int nread = 0;
 	unsigned int tmp = 0;
 	size_t dim;
 	
@@ -161,7 +181,7 @@ void list_funz(char*command,struct sockaddr*serv_addr,socklen_t* sock_len,size_t
             printf("%s\n",buff);
             tmp += nread;
            }
-       
+           
     }
 
     printf("File ricevuto\n");
