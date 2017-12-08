@@ -82,6 +82,7 @@ void get_funz(char*command,char*filename,struct sockaddr* serv_addr,socklen_t* s
     }
     printf("File ricevuto\n");
     close(fd);
+    exit(EXIT_SUCCESS);
 	
 }
 
@@ -147,13 +148,13 @@ void post_funz(char*command,char*filename,struct sockaddr* serv_addr,size_t dim_
 		funz_error("Trasferimento incompleto\n",0);
 	
 	close(fd);
-
+	exit(EXIT_SUCCESS);
 }
 
 void list_funz(char*command,struct sockaddr*serv_addr,socklen_t* sock_len,size_t dim_serv,int sockfd)
 {
 	char buff[1024] = {};
-	int nread = 0;
+	int nread = 0,fd;
 	unsigned int tmp = 0;
 	size_t dim;
 	
@@ -174,18 +175,24 @@ void list_funz(char*command,struct sockaddr*serv_addr,socklen_t* sock_len,size_t
     printf("Ho ricevuto dim in char %s\n",buff);
     printf("dim file ricevuta %zu\n",dim);
     puts("entro nel while");
+    fd = open("inServer",O_CREAT | O_WRONLY,0644);
     while(tmp != dim)
-    {
-        puts("attendo il server");
-        while((nread = recvfrom(sockfd,buff,sizeof(buff),0,serv_addr,sock_len)) > 0 ){
-            printf("%s\n",buff);
-            tmp += nread;
-           }
-           
+    {	
+		puts("sto per leggere\n");
+        nread = recvfrom(sockfd,buff,sizeof(buff),0,serv_addr,sock_len);
+        if(nread < 0)
+			funz_error("Error in recvfrom\n",0);
+	
+        printf("Ho ricevuto cose %s\n",buff);
+        printf("Ho letto nread = %d \n",nread);
+        int w = write(fd,buff,nread);
+        if(w < 0 )
+			funz_error("Error writing on file\n",0);
+		tmp += nread;
     }
-
     printf("File ricevuto\n");
-
+    close(fd);
+	exit(EXIT_SUCCESS);
 	
 }
 
@@ -193,15 +200,16 @@ void list_funz(char*command,struct sockaddr*serv_addr,socklen_t* sock_len,size_t
 int main(int argc, char *argv[])
 {
 	int sockfd; /* file descriptor socket client e file a ricevere/inviare*/
-	char*command = argv[2];
-   	char *filename = argv[3]; /*nome file da ricevere/inviare*/
+	char line[1024];
+	char command[1024];
+   	char filename[1024]; /*nome file da ricevere/inviare*/
     struct sockaddr_in servaddr; /*indirizzo del server*/;
     socklen_t dimaddr = sizeof(sockfd);
 	
 	if(argc < 2)
-		funz_error("Usage :./clientUDP.c <hostname> <command> <filename>\n",0);
+		funz_error("Usage :./clientUDP.c <hostname> \n",0);
 	
-	printf(">Comando ricevuto -- %s\n\n", command);
+	
 	
 	if((sockfd = socket(AF_INET,SOCK_DGRAM,0)) < 0)
 		funz_error("Error in socket\n",1);
@@ -214,12 +222,82 @@ int main(int argc, char *argv[])
 	
 	puts("inet_pton superata");
 	
-	if(strcasecmp(command,"GET") == 0)
-		get_funz(command,filename,(struct sockaddr*)&servaddr,&dimaddr,sizeof(servaddr),sockfd);
-	if(strcasecmp(command,"POST") == 0)
-		post_funz(command,filename,(struct sockaddr*)&servaddr,sizeof(servaddr),sockfd);
-	if(strcasecmp(command,"LIST") == 0)
-		list_funz(command,(struct sockaddr*)&servaddr,&dimaddr,sizeof(servaddr),sockfd);
 	
+	while(!feof(stdin))
+	{
+		char* c = fgets(line,1024,stdin);
+		printf("Ricevuto comando %s \n",line);
+		if( c == NULL )
+			funz_error("Error in fgets\n",1);
+		int i = 0;
+		while(1)
+		{
+			command[i] = line[i];
+			i++;
+			if(line[i] == '\n')
+			{
+				command[i] = '\0';
+				break;
+			}
+			if(line[i] == ' ')
+			{
+				command[i] = '\0';
+				int j = 0;
+				i++;
+				while(line[i] != '\n')
+				{
+					filename[j] = line[i];
+					j++;
+					i++;
+				}
+				break;	
+			}	
+		}
+		puts("uscito dal while");
+		printf("il comando è : %s \n" , command);
+		if(strcasecmp(command,"GET") == 0)
+		{
+			pid_t pid = fork();
+			if(pid == 0)
+			{
+				puts("CHILD PROCESS, EXEGUTING GET COMMAND!!!!");
+				get_funz(command,filename,(struct sockaddr*)&servaddr,&dimaddr,sizeof(servaddr),sockfd);
+			}
+			if(pid < 0)
+				funz_error("Error forking process\n",1);
+			if(pid > 0 )
+				continue;
+		}
+		if(strcasecmp(command,"POST") == 0)
+		{
+			pid_t pid = fork();
+			if(pid == 0)
+			{
+				puts("CHILD PROCESS, EXEGUTING POST COMMAND!!!!");
+				post_funz(command,filename,(struct sockaddr*)&servaddr,sizeof(servaddr),sockfd);
+			}
+			if(pid < 0)
+				funz_error("Error forking process\n",1);
+		}
+		if(strcasecmp(command,"LIST") == 0)
+		{
+			puts("sono nel ciclo della list");
+			pid_t pid = fork();
+			if(pid == 0)
+			{
+				puts("CHILD PROCESS, EXEGUTING LIST COMMAND!!!!");
+				list_funz(command,(struct sockaddr*)&servaddr,&dimaddr,sizeof(servaddr),sockfd);
+			}
+			if(pid < 0)
+				funz_error("Error forking process\n",1);
+		}
+		if(strcasecmp(command,"CLOSE") == 0)
+		{
+			puts("Chiusura applicazione in corso\n");
+			exit(EXIT_SUCCESS);
+		}
+		else
+			puts("Comando sconosciuto, si prega di ridigitare\n");
+	}
 	return 0;
 }

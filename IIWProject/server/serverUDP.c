@@ -82,10 +82,6 @@ void get_funz(struct sockaddr_in* addr,socklen_t * dimaddr,int sockfds,size_t ad
 		puts("dim file inviata\n");
 		if(bytes_sent == -1)
 			funz_error("Errore durante l'invio della dimensione del file\n");
-			/* 
-			 * provo a scrivere su un file locale*/
-			 
-		int fdlocale = open("pdflocale",O_CREAT | O_WRONLY ,0644 );
 	
 		while(tmpread != fsize)
 		{
@@ -94,10 +90,7 @@ void get_funz(struct sockaddr_in* addr,socklen_t * dimaddr,int sockfds,size_t ad
 			if(rcread == -1)
 				funz_error("Errore lettura file");
 			tmpread += rcread;
-			printf("contenuto %s\n",buff);
-			/* scrivo su file locale */ 
-				
-				write(fdlocale,buff,rcread);
+			printf("contenuto %s\n",buff);			
 			if(fsize - totsend > sizeof(buff))
 				rcsend = sendto(sockfds,buff,sizeof(buff), 0,(struct sockaddr*)addr,addrsize);
 			else
@@ -122,12 +115,13 @@ void list_funz(struct sockaddr_in* addr,int sockfds,size_t addrsize)
 		char buff[1024] = {};
 		struct stat stat_buf;
 		struct dirent *dir_p;
-		int fd,bytes_sent = 0,rc;
+		int fd,bytes_sent = 0,rcread = 0, totsend = 0, rcsend = 0;
+		unsigned int tmpread = 0;
 		size_t fsize;
 		puts("ricevuto comando LIST");
 		DIR *dp;
 		
-		dp = opendir("/home/casa/Scrivania/iiwproj/IIWProject/server");
+		dp = opendir("./");
 		
 		if ( dp == NULL )
 			exit(1);
@@ -155,20 +149,28 @@ void list_funz(struct sockaddr_in* addr,int sockfds,size_t addrsize)
 		if(bytes_sent == -1)
 			funz_error("Errore durante l'invio della dimensione del file\n");
 		close(fd);
-		char content[1024] = {};
 		fd = open("listafile",O_RDONLY);
-		int controllo = read(fd,content,fsize);
-		printf("contenuto %s\n",content);
-		if(controllo == -1)
-			funz_error("Errore lettura file");
-		rc = sendto(sockfds,content,strlen(content), 0,(struct sockaddr*)addr,addrsize);
-		if(rc == -1)	
-			funz_error("Errore durante l'invio del file\n");
-		if(rc != stat_buf.st_size)
+		while(tmpread != fsize)
+		{
+			rcread = read(fd,buff,sizeof(buff));
+			printf("ho letto %d bytes\n",rcread);
+			if(rcread == -1)
+				funz_error("Errore lettura file");
+			tmpread += rcread;
+			printf("contenuto %s\n",buff);			
+			if(fsize - totsend > sizeof(buff))
+				rcsend = sendto(sockfds,buff,sizeof(buff), 0,(struct sockaddr*)addr,addrsize);
+			else
+				rcsend = sendto(sockfds,buff,fsize-totsend, 0,(struct sockaddr*)addr,addrsize);				
+			if(rcsend == -1)	
+				funz_error("Errore durante l'invio del file\n");
+			totsend += rcsend;
+			
+		}
+		if(totsend != stat_buf.st_size)
 			funz_error("Trasferimento incompleto\n");
-		
-		close(fd);
-				
+	
+		close(fd);		
 }
 
 
