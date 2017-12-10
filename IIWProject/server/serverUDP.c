@@ -36,34 +36,76 @@
 #include <sys/sendfile.h>
 #include <sys/stat.h>
 #include <dirent.h>
+#include <sys/ipc.h>
+#include <sys/sem.h>
+#include <signal.h>
+
 #define SERV_PORT 5193
 #define MAXLINE 1024
 
+#define acquire_sem(s,i) operate_sem((s),(i),-1)
+#define rel_sem(s,i) operate_sem((s),(i),+1)
+
+const int semaforo;
+struct sigaction act;
+ 
+static void pSigHandler(int signo){
+    switch (signo) {
+            case SIGUSR1:
+            printf("Segnale ricevuto\n");
+            fflush(stdout);
+            break;
+    }
+}
 void funz_error(char*mexerr)
 {	
 	perror(mexerr);
 	exit(-1);	
 }
 
-void get_funz(struct sockaddr_in* addr,socklen_t * dimaddr,int sockfds,size_t addrsize)
+void operate_sem(int semid, int index , int op)
 {
-		char filename[1024] = {};
+	struct sembuf sb;
+	
+	sb.sem_num = index;
+	sb.sem_op = op;
+	sb.sem_flg = 0;
+	
+	int rc = semop(semid,&sb,1);
+	if(rc == -1)
+		funz_error("Error doing operation on sem IPC\n");	
+}
+
+void init_sem(int*semid)
+{
+	union semun {
+		int val;
+		struct semid_ds*buf;
+		unsigned short *array;
+		struct seminfo *__buff;
+	} su;
+	int sid;
+	
+	sid = semget(IPC_PRIVATE,5,0666);
+	if(sid==-1)
+		funz_error("Error getting semID\n");
+	
+	*semid = sid;
+	
+	su.val = 1;    //val=  1 semaforo libero
+	int rc= semctl(sid,0,SETVAL,su);
+	if(rc == -1)
+		funz_error("Error initializing sem\n");
+	
+}
+
+void get_funz(char*filename,struct sockaddr_in* addr,int sockfds,size_t addrsize)
+{
 		char buff[1024] = {};
 		struct stat stat_buf;
-		int fd,bytes_sent = 0,rcsend = 0,rcread = 0,totsend = 0;
-		unsigned int tmpread = 0;
+		int fd,bytes_sent = 0,rcsend = 0,rcread = 0;
+		unsigned int tmpread = 0,totsend = 0;
 		size_t fsize;
-	/*ricevo il nome del file da client*/
-		puts("attendo nome del file");
-		int recv = recvfrom(sockfds,filename,sizeof(filename),0,(struct sockaddr*)addr,dimaddr);
-		if(recv < 0 )
-			funz_error("Nome file non ricevuto\n");
-		puts("nome file ricevuto");
-		filename[recv] = '\0';
-		if(filename[strlen(filename)-1] == '\n' )
-			filename[strlen(filename)-1] = '\0';
-		if(filename[strlen(filename)-1] == '\r' )
-			filename[strlen(filename)-1] = '\0';
 
 		fprintf(stderr,"Rievuta richiesta di inviare il file: '%s'\n",filename);
 
@@ -83,7 +125,7 @@ void get_funz(struct sockaddr_in* addr,socklen_t * dimaddr,int sockfds,size_t ad
 		if(bytes_sent == -1)
 			funz_error("Errore durante l'invio della dimensione del file\n");
 	
-		while(tmpread != fsize)
+		while(totsend != fsize)
 		{
 			rcread = read(fd,buff,sizeof(buff));
 			printf("ho letto %d bytes\n",rcread);
@@ -105,102 +147,98 @@ void get_funz(struct sockaddr_in* addr,socklen_t * dimaddr,int sockfds,size_t ad
 			funz_error("Trasferimento incompleto\n");
 	
 		close(fd);
-				
+		exit(EXIT_SUCCESS);
 }
+		
+
 
 
 void list_funz(struct sockaddr_in* addr,int sockfds,size_t addrsize)
 {
-		
-		char buff[1024] = {};
-		struct stat stat_buf;
-		struct dirent *dir_p;
-		int fd,bytes_sent = 0,rcread = 0, totsend = 0, rcsend = 0;
-		unsigned int tmpread = 0;
-		size_t fsize;
-		puts("ricevuto comando LIST");
-		DIR *dp;
-		
-		dp = opendir("./");
-		
-		if ( dp == NULL )
-			exit(1);
-		fd = open("listafile",O_CREAT | O_WRONLY, 0644);
-		while( ( dir_p = readdir(dp) ) != NULL )
-		{
-				
-			int w = write(fd,dir_p -> d_name,strlen(dir_p -> d_name));
-			if(w < 0 )
-				funz_error("error writing on file\n");
-			int u = write(fd,"\n",strlen("\n"));
-			if( u < 0 )
-				funz_error("Error writing on file\n");
-				
-		}
-		closedir(dp);
-
-		fstat(fd,&stat_buf);
-		fsize = stat_buf.st_size;
-		sprintf(buff,"%zu",fsize);
-	 
-	 	printf("dim file %zu\n",fsize);
-		bytes_sent = sendto(sockfds, buff,sizeof(buff),0,(struct sockaddr*)addr,addrsize);/*invio la dim del file*/
-		puts("dim file inviata\n");
-		if(bytes_sent == -1)
-			funz_error("Errore durante l'invio della dimensione del file\n");
-		close(fd);
-		fd = open("listafile",O_RDONLY);
-		while(tmpread != fsize)
-		{
-			rcread = read(fd,buff,sizeof(buff));
-			printf("ho letto %d bytes\n",rcread);
-			if(rcread == -1)
-				funz_error("Errore lettura file");
-			tmpread += rcread;
-			printf("contenuto %s\n",buff);			
-			if(fsize - totsend > sizeof(buff))
-				rcsend = sendto(sockfds,buff,sizeof(buff), 0,(struct sockaddr*)addr,addrsize);
-			else
-				rcsend = sendto(sockfds,buff,fsize-totsend, 0,(struct sockaddr*)addr,addrsize);				
-			if(rcsend == -1)	
-				funz_error("Errore durante l'invio del file\n");
-			totsend += rcsend;
-			
-		}
-		if(totsend != stat_buf.st_size)
-			funz_error("Trasferimento incompleto\n");
 	
-		close(fd);		
+	char buff[1024] = {};
+	struct stat stat_buf;
+	struct dirent *dir_p;
+	int fd,bytes_sent = 0,rcread = 0, totsend = 0, rcsend = 0;
+	unsigned int tmpread = 0;
+	size_t fsize;
+	puts("ricevuto comando LIST");
+
+	DIR *dp;
+	
+	dp = opendir("./");
+	
+	if ( dp == NULL )
+		exit(1);
+	fd = open("listafile",O_CREAT | O_WRONLY, 0644);
+	while( ( dir_p = readdir(dp) ) != NULL )
+	{
+			
+		int w = write(fd,dir_p -> d_name,strlen(dir_p -> d_name));
+		if(w < 0 )
+			funz_error("error writing on file\n");
+		int u = write(fd,"\n",strlen("\n"));
+		if( u < 0 )
+			funz_error("Error writing on file\n");
+			
+	}
+	closedir(dp);
+
+	fstat(fd,&stat_buf);
+	fsize = stat_buf.st_size;
+	sprintf(buff,"%zu",fsize);
+ 
+	printf("dim file %zu\n",fsize);
+	bytes_sent = sendto(sockfds, buff,sizeof(buff),0,(struct sockaddr*)addr,addrsize);/*invio la dim del file*/
+	puts("dim file inviata\n");
+	if(bytes_sent == -1)
+		funz_error("Errore durante l'invio della dimensione del file\n");
+	close(fd);
+	fd = open("listafile",O_RDONLY);
+	while(tmpread != fsize)
+	{
+		rcread = read(fd,buff,sizeof(buff));
+		printf("ho letto %d bytes\n",rcread);
+		if(rcread == -1)
+			funz_error("Errore lettura file");
+		tmpread += rcread;
+		printf("contenuto %s\n",buff);			
+		if(fsize - totsend > sizeof(buff))
+			rcsend = sendto(sockfds,buff,sizeof(buff), 0,(struct sockaddr*)addr,addrsize);
+		else
+			rcsend = sendto(sockfds,buff,fsize-totsend, 0,(struct sockaddr*)addr,addrsize);				
+		if(rcsend == -1)	
+			funz_error("Errore durante l'invio del file\n");
+		totsend += rcsend;
+		
+	}
+	if(totsend != stat_buf.st_size)
+		funz_error("Trasferimento incompleto\n");
+
+	close(fd);	
+	exit(EXIT_SUCCESS);
+		
 }
 
 
-void post_funz(struct sockaddr_in* addr,socklen_t * dimaddr,int sockfds)
+void post_funz(char*filename,struct sockaddr_in* addr,socklen_t * dimaddr,int sockfds)
 {
-		char filename[1024] = {};
 		char buff[1024] = {};
 		int fd,nread = 0;
-		unsigned int tmp = 0;
-		size_t dim;
-	/*DEVO RICEVERE NOMEFILE*/
-		int f = recvfrom(sockfds,filename,sizeof(filename),0,(struct sockaddr*)addr,dimaddr);
-		if(f < 0 )
-			funz_error("Error namefile non ricevuto");
-		filename[f] = '\0';
-		if(filename[strlen(filename)-1] == '\n' )
-			filename[strlen(filename)-1] = '\0';
-		if(filename[strlen(filename)-1] == '\r' )
-			filename[strlen(filename)-1] = '\0';
+		int tmp = 0;
+		long int dim;
 			
 		fd = open(filename, O_CREAT | O_WRONLY, 0644);
 		if(fd < 0 )
 		{
 			funz_error("Error opening file\n");
 		}
-    
+
 		int r = recvfrom(sockfds,buff,sizeof(buff),0,(struct sockaddr*)addr,dimaddr);
 		if(r == -1)
 			funz_error("Dimensione non arrivata\n");
-		dim = atoi(buff);
+		char*ptr;
+		dim = strtol(buff,&ptr,10);
 		printf("Ho ricevuto dim in char %s\n",buff);
 		printf("dim file ricevuta %zu\n",dim);
 		puts("entro nel while");
@@ -218,18 +256,27 @@ void post_funz(struct sockaddr_in* addr,socklen_t * dimaddr,int sockfds)
 			if(w < 0 )
 				funz_error("Error writing on file\n");
 			tmp += nread;
-    }
+		}
 		printf("File ricevuto\n");
+		kill(getppid(),SIGUSR1);
 		close(fd);
-			
+		exit(EXIT_SUCCESS);
 }
 
 
 int main(int argc, char **argv)
 {
+	int semID;
 	int sockfds;
 	struct sockaddr_in addr, cli_addr;
 	socklen_t dimaddr;	
+	
+	signal(SIGUSR1,pSigHandler);
+	
+	memset (&act, '\0', sizeof(act));
+	act.sa_handler = &pSigHandler;
+	sigaction(SIGUSR1,&act,NULL);
+	
 
 	if((sockfds = socket(AF_INET,SOCK_DGRAM,0))<0) /*creo socket server*/
 		funz_error("Error during socket creation\n");
@@ -243,44 +290,78 @@ int main(int argc, char **argv)
 		funz_error("Error assigning address to the socket\n");
 	puts("connessione della socket effettuata");
 	dimaddr = sizeof(sockfds);
-	
+	init_sem(&semID);
 	while(1)
 	{
-		char command[1024] = {};
-		
+		char line[1024] = {};
 		puts("attendo di ricevere il comando");
-		int comm = recvfrom(sockfds,command,sizeof(command),0,(struct sockaddr*)&addr,&dimaddr);
-		if(comm <= 0 )
-			funz_error("dio carol\n");
-		printf("Il comando ricevuto è : %s\n",command);
-
-		if(strcasecmp(command,"GET") == 0)
+		int b = recvfrom(sockfds,line,sizeof(line),0,(struct sockaddr*)&addr,&dimaddr);
+		if(b <= 0 )
+			funz_error("Error while receiving command\n");
+		printf("Il comando ricevuto è : %s\n",line);
+		pid_t pid = fork();
+		if(pid == 0)
 		{
+			int i = 0;
+			char command[1024] = {};
+			char filename[1024] = {};
 			
-				get_funz(&addr,&dimaddr,sockfds,sizeof(addr));
+			while(1)
+			{
+				command[i] = line[i];
+				i++;
+				if(line[i] == '\n')
+				{
+					command[i] = '\0';
+					break;
+				}
+				if(line[i] == ' ')
+				{
+					command[i] = '\0';
+					int j = 0;
+					i++;
+					while(line[i] != '\n')
+					{
+						filename[j] = line[i];
+						j++;
+						i++;
+					}
+					break;	
+				}	
+			}
+			
+			filename[strlen(filename)] = '\0';
+			if(filename[strlen(filename)-1] == '\n' )
+				filename[strlen(filename)-1] = '\0';
+			if(filename[strlen(filename)-1] == '\r' )
+				filename[strlen(filename)-1] = '\0';
+			
+			if(strcasecmp(command,"GET") == 0)
+			{
 				char * ip_address = inet_ntoa(cli_addr.sin_addr);
-				printf("IP del client: %s\n", ip_address);
-		
-		}
-	
-		if(strcasecmp(command,"LIST") == 0)
-		{   
+				printf("Ricevuta richiesta da client con IP: %s\n", ip_address);
+				get_funz(filename,&addr,sockfds,sizeof(addr));
+			}
+			if(strcasecmp(command,"LIST") == 0)
+			{   
+				char * ip_address = inet_ntoa(cli_addr.sin_addr);
+				printf("Ricevuta richiesta da client con IP: %s\n", ip_address);
+				list_funz(&addr,sockfds,sizeof(addr));
+			}
+			if(strcasecmp(command,"POST") == 0)
+			{
+				
+				char * ip_address = inet_ntoa(cli_addr.sin_addr);
+				printf("Ricevuta richiesta da client con IP: %s\n", ip_address);
+				post_funz(filename,&addr,&dimaddr,sockfds);
+				
+			}
 			
-			list_funz(&addr,sockfds,sizeof(addr));
-			char * ip_address = inet_ntoa(cli_addr.sin_addr);
-			printf("IP del client: %s\n", ip_address);
-			
 		}
-		
-		if(strcasecmp(command,"POST") == 0)
-		{
-		
-			post_funz(&addr,&dimaddr,sockfds);
-			char * ip_address = inet_ntoa(cli_addr.sin_addr);
-			printf("IP del client: %s\n", ip_address);
-		
-		}
-			
+		if(pid < 0 )
+			funz_error("Error spawning process\n");
+		if(pid > 0)
+			waitpid(pid);
 	}
 	argc = argc;
 	argv = argv;
