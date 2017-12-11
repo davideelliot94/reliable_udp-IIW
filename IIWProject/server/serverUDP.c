@@ -43,13 +43,10 @@
 #define SERV_PORT 5193
 #define MAXLINE 1024
 
-#define acquire_sem(s,i) operate_sem((s),(i),-1)
-#define rel_sem(s,i) operate_sem((s),(i),+1)
-
-const int semaforo;
 struct sigaction act;
  
 static void pSigHandler(int signo){
+	
     switch (signo) {
             case SIGUSR1:
             printf("Segnale ricevuto\n");
@@ -57,46 +54,11 @@ static void pSigHandler(int signo){
             break;
     }
 }
+
 void funz_error(char*mexerr)
 {	
 	perror(mexerr);
 	exit(-1);	
-}
-
-void operate_sem(int semid, int index , int op)
-{
-	struct sembuf sb;
-	
-	sb.sem_num = index;
-	sb.sem_op = op;
-	sb.sem_flg = 0;
-	
-	int rc = semop(semid,&sb,1);
-	if(rc == -1)
-		funz_error("Error doing operation on sem IPC\n");	
-}
-
-void init_sem(int*semid)
-{
-	union semun {
-		int val;
-		struct semid_ds*buf;
-		unsigned short *array;
-		struct seminfo *__buff;
-	} su;
-	int sid;
-	
-	sid = semget(IPC_PRIVATE,5,0666);
-	if(sid==-1)
-		funz_error("Error getting semID\n");
-	
-	*semid = sid;
-	
-	su.val = 1;    //val=  1 semaforo libero
-	int rc= semctl(sid,0,SETVAL,su);
-	if(rc == -1)
-		funz_error("Error initializing sem\n");
-	
 }
 
 void get_funz(char*filename,struct sockaddr_in* addr,int sockfds,size_t addrsize)
@@ -105,15 +67,19 @@ void get_funz(char*filename,struct sockaddr_in* addr,int sockfds,size_t addrsize
 		struct stat stat_buf;
 		int fd,bytes_sent = 0,rcsend = 0,rcread = 0;
 		unsigned int tmpread = 0,totsend = 0;
+		struct flock lock;
 		size_t fsize;
-
+		memset(&lock,0,sizeof(lock));
+		lock.l_type = F_RDLCK;
+		
 		fprintf(stderr,"Rievuta richiesta di inviare il file: '%s'\n",filename);
 
-	/*apro il file da mandare*/
-
+		/*apro il file da mandare*/
+		
 		fd = open(filename,O_RDONLY);
 		if(fd == -1)
 			funz_error("Impossibile aprire \n");	
+		fcntl(fd,F_SETLKW,&lock);
 
 		fstat(fd,&stat_buf);
 		fsize = stat_buf.st_size;
@@ -123,29 +89,45 @@ void get_funz(char*filename,struct sockaddr_in* addr,int sockfds,size_t addrsize
 		bytes_sent = sendto(sockfds, buff,sizeof(buff),0,(struct sockaddr*)addr,addrsize);/*invio la dim del file*/
 		puts("dim file inviata\n");
 		if(bytes_sent == -1)
+		{	
+			lock.l_type = F_UNLCK;
+			fcntl(fd,F_SETLKW, &lock);
 			funz_error("Errore durante l'invio della dimensione del file\n");
-	
+		}
 		while(totsend != fsize)
 		{
 			rcread = read(fd,buff,sizeof(buff));
 			printf("ho letto %d bytes\n",rcread);
 			if(rcread == -1)
+			{
+				lock.l_type = F_UNLCK;
+				fcntl(fd,F_SETLKW, &lock);
 				funz_error("Errore lettura file");
+			}
 			tmpread += rcread;
 			printf("contenuto %s\n",buff);			
 			if(fsize - totsend > sizeof(buff))
 				rcsend = sendto(sockfds,buff,sizeof(buff), 0,(struct sockaddr*)addr,addrsize);
 			else
 				rcsend = sendto(sockfds,buff,fsize-totsend, 0,(struct sockaddr*)addr,addrsize);				
-			if(rcsend == -1)	
+			if(rcsend == -1)
+			{	
+				lock.l_type = F_UNLCK;
+				fcntl(fd,F_SETLKW, &lock);
 				funz_error("Errore durante l'invio del file\n");
+			}
 			totsend += rcsend;
 			
 		}
 		printf("\n\ntnpread è %d\n\n mentre st_size è %zu\n\n ed totsend è %d \n\n",tmpread,stat_buf.st_size,totsend);	
 		if(totsend != stat_buf.st_size)
+		{
+			lock.l_type = F_UNLCK;
+			fcntl(fd,F_SETLKW, &lock);
 			funz_error("Trasferimento incompleto\n");
-	
+		}
+		lock.l_type = F_UNLCK;
+		fcntl(fd,F_SETLKW,&lock);
 		close(fd);
 		exit(EXIT_SUCCESS);
 }
@@ -159,28 +141,41 @@ void list_funz(struct sockaddr_in* addr,int sockfds,size_t addrsize)
 	char buff[1024] = {};
 	struct stat stat_buf;
 	struct dirent *dir_p;
+	struct flock lock;
 	int fd,bytes_sent = 0,rcread = 0, totsend = 0, rcsend = 0;
 	unsigned int tmpread = 0;
 	size_t fsize;
 	puts("ricevuto comando LIST");
 
+	memset(&lock,0,sizeof(lock));
 	DIR *dp;
-	
 	dp = opendir("./");
 	
 	if ( dp == NULL )
 		exit(1);
 	fd = open("listafile",O_CREAT | O_WRONLY, 0644);
+	if(fd == -1)
+		funz_error("Error opening file\n");
+	lock.l_type = F_WRLCK;
+	fcntl(fd,F_SETLKW,&lock);
+	
 	while( ( dir_p = readdir(dp) ) != NULL )
 	{
 			
 		int w = write(fd,dir_p -> d_name,strlen(dir_p -> d_name));
 		if(w < 0 )
+		{
+			lock.l_type = F_UNLCK;
+			fcntl(fd,F_SETLKW,&lock);
 			funz_error("error writing on file\n");
+		}
 		int u = write(fd,"\n",strlen("\n"));
 		if( u < 0 )
+		{
+			lock.l_type = F_UNLCK;
+			fcntl(fd,F_SETLKW,&lock);
 			funz_error("Error writing on file\n");
-			
+		}	
 	}
 	closedir(dp);
 
@@ -192,15 +187,30 @@ void list_funz(struct sockaddr_in* addr,int sockfds,size_t addrsize)
 	bytes_sent = sendto(sockfds, buff,sizeof(buff),0,(struct sockaddr*)addr,addrsize);/*invio la dim del file*/
 	puts("dim file inviata\n");
 	if(bytes_sent == -1)
+	{
+		lock.l_type = F_UNLCK;
+		fcntl(fd,F_SETLKW,&lock);
 		funz_error("Errore durante l'invio della dimensione del file\n");
+	}
+	lock.l_type = F_UNLCK;
+	fcntl(fd,F_SETLKW,&lock);
 	close(fd);
 	fd = open("listafile",O_RDONLY);
+	if(fd == -1)
+		funz_error("Error opening file\n");
+	lock.l_type = F_RDLCK;
+	fcntl(fd,F_SETLKW,&lock);
+	
 	while(tmpread != fsize)
 	{
 		rcread = read(fd,buff,sizeof(buff));
 		printf("ho letto %d bytes\n",rcread);
 		if(rcread == -1)
+		{
+			lock.l_type = F_UNLCK;
+			fcntl(fd,F_SETLKW,&lock);
 			funz_error("Errore lettura file");
+		}
 		tmpread += rcread;
 		printf("contenuto %s\n",buff);			
 		if(fsize - totsend > sizeof(buff))
@@ -208,13 +218,22 @@ void list_funz(struct sockaddr_in* addr,int sockfds,size_t addrsize)
 		else
 			rcsend = sendto(sockfds,buff,fsize-totsend, 0,(struct sockaddr*)addr,addrsize);				
 		if(rcsend == -1)	
+		{
+			lock.l_type = F_UNLCK;
+			fcntl(fd,F_SETLKW,&lock);
 			funz_error("Errore durante l'invio del file\n");
+		}
 		totsend += rcsend;
 		
 	}
 	if(totsend != stat_buf.st_size)
+	{
+		lock.l_type = F_UNLCK;
+		fcntl(fd,F_SETLKW,&lock);
 		funz_error("Trasferimento incompleto\n");
-
+	}
+	lock.l_type = F_UNLCK;
+	fcntl(fd,F_SETLKW,&lock);
 	close(fd);	
 	exit(EXIT_SUCCESS);
 		
@@ -227,16 +246,22 @@ void post_funz(char*filename,struct sockaddr_in* addr,socklen_t * dimaddr,int so
 		int fd,nread = 0;
 		int tmp = 0;
 		long int dim;
+		struct flock lock;
+		memset(&lock,0,sizeof(lock));
 			
 		fd = open(filename, O_CREAT | O_WRONLY, 0644);
 		if(fd < 0 )
-		{
 			funz_error("Error opening file\n");
-		}
-
+		
+		lock.l_type = F_WRLCK;
+		fcntl(fd,F_SETLKW,&lock);
 		int r = recvfrom(sockfds,buff,sizeof(buff),0,(struct sockaddr*)addr,dimaddr);
 		if(r == -1)
+		{
+			lock.l_type = F_UNLCK;
+			fcntl(fd,F_SETLKW,&lock);
 			funz_error("Dimensione non arrivata\n");
+		}
 		char*ptr;
 		dim = strtol(buff,&ptr,10);
 		printf("Ho ricevuto dim in char %s\n",buff);
@@ -248,17 +273,26 @@ void post_funz(char*filename,struct sockaddr_in* addr,socklen_t * dimaddr,int so
 			puts("sto per leggere\n");
 			nread = recvfrom(sockfds,buff,sizeof(buff),0,(struct sockaddr*)addr,dimaddr);
 			if(nread < 0)
+			{
+				lock.l_type = F_UNLCK;
+				fcntl(fd,F_SETLKW,&lock);
 				funz_error("Error in recvfrom\n");
-	
+			}
 			printf("Ho ricevuto cose %s\n",buff);
 			printf("Ho letto nread = %d \n",nread);
 			int w = write(fd,buff,nread);
 			if(w < 0 )
+			{
+				lock.l_type = F_UNLCK;
+				fcntl(fd,F_SETLKW,&lock);
 				funz_error("Error writing on file\n");
+			}
 			tmp += nread;
 		}
 		printf("File ricevuto\n");
 		kill(getppid(),SIGUSR1);
+		lock.l_type = F_UNLCK;
+		fcntl(fd,F_SETLKW,&lock);
 		close(fd);
 		exit(EXIT_SUCCESS);
 }
@@ -266,18 +300,16 @@ void post_funz(char*filename,struct sockaddr_in* addr,socklen_t * dimaddr,int so
 
 int main(int argc, char **argv)
 {
-	int semID;
+	
+	/* fase di inizializzazione --> */
 	int sockfds;
 	struct sockaddr_in addr, cli_addr;
 	socklen_t dimaddr;	
-	
 	signal(SIGUSR1,pSigHandler);
-	
 	memset (&act, '\0', sizeof(act));
 	act.sa_handler = &pSigHandler;
 	sigaction(SIGUSR1,&act,NULL);
 	
-
 	if((sockfds = socket(AF_INET,SOCK_DGRAM,0))<0) /*creo socket server*/
 		funz_error("Error during socket creation\n");
 	puts("socket assegnata");
@@ -290,15 +322,24 @@ int main(int argc, char **argv)
 		funz_error("Error assigning address to the socket\n");
 	puts("connessione della socket effettuata");
 	dimaddr = sizeof(sockfds);
-	init_sem(&semID);
+	
+	/* <--- */
+	
+	
+	/* Job del server --->  */
 	while(1)
 	{
+		
+		/* lettura comando */
+		
 		char line[1024] = {};
 		puts("attendo di ricevere il comando");
 		int b = recvfrom(sockfds,line,sizeof(line),0,(struct sockaddr*)&addr,&dimaddr);
 		if(b <= 0 )
 			funz_error("Error while receiving command\n");
 		printf("Il comando ricevuto è : %s\n",line);
+		
+		/* esecuzione comando tramite processo figlio ---> */
 		pid_t pid = fork();
 		if(pid == 0)
 		{
@@ -336,18 +377,22 @@ int main(int argc, char **argv)
 			if(filename[strlen(filename)-1] == '\r' )
 				filename[strlen(filename)-1] = '\0';
 			
+			
+			/* chiamata a funzione get */
 			if(strcasecmp(command,"GET") == 0)
 			{
 				char * ip_address = inet_ntoa(cli_addr.sin_addr);
 				printf("Ricevuta richiesta da client con IP: %s\n", ip_address);
 				get_funz(filename,&addr,sockfds,sizeof(addr));
 			}
+			/* chiamata a funzione list*/
 			if(strcasecmp(command,"LIST") == 0)
 			{   
 				char * ip_address = inet_ntoa(cli_addr.sin_addr);
 				printf("Ricevuta richiesta da client con IP: %s\n", ip_address);
 				list_funz(&addr,sockfds,sizeof(addr));
 			}
+			/* chiamata a funzione post */
 			if(strcasecmp(command,"POST") == 0)
 			{
 				
@@ -360,6 +405,8 @@ int main(int argc, char **argv)
 		}
 		if(pid < 0 )
 			funz_error("Error spawning process\n");
+		/*il server attende che il proc figlio abbia finito le comunicazioni in lettura
+		 * altrimenti rischia di sovrapporsi */
 		if(pid > 0)
 			waitpid(pid);
 	}
