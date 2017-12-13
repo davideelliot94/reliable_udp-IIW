@@ -6,6 +6,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <sys/types.h>
+#include <sys/stat.h>
 #include <netdb.h>
 #include <fcntl.h>
 #include <stdint.h>
@@ -17,12 +18,16 @@ void funz_error(char*mexerr,int type)
 {	
 	if(type == 0 )
 	{
+		puts("###########################################################");
 		perror(mexerr);
+		puts("###########################################################");
 		exit(1);
 	}
 	if(type == 1 )
 	{
+		puts("###########################################################");
 		perror(mexerr);
+		puts("###########################################################");
 		exit(-1);	
 	}
 }
@@ -34,7 +39,9 @@ void get_funz(char*command,char*filename,struct sockaddr* serv_addr,socklen_t* s
 	char buff[1024] = {};
 	int fd ;
 	long int dim;
+	struct flock lock;
 	
+	memset(&lock,0,sizeof(lock));
 	strcpy(buff,command);
 	printf("invio il comando -%s-\n",buff);
 	
@@ -43,38 +50,59 @@ void get_funz(char*command,char*filename,struct sockaddr* serv_addr,socklen_t* s
         funz_error("Error in send\n",1);
     }
     puts("comando inviato...attendo");
-
-    fd = open(filename, O_CREAT | O_WRONLY, 0644);
-    if(fd < 0 )
-    {
-        funz_error("Error opening file\n",0);
-    }
     
     int r = recvfrom(sockfd,buff,sizeof(buff),0,serv_addr,sock_len);
     if(r == -1)
         funz_error("Dimensione non arrivata\n",0);
+    if(strcasecmp(buff,"BAD_REQUEST")==0)
+    {
+		puts("###########################################################");
+		printf("BAD_REQUEST il file richiesto non è presente sul server\n");
+		puts("###########################################################");
+		exit(EXIT_FAILURE);
+	}  
+          
+    fd = open(filename, O_CREAT | O_WRONLY, 0644);
+    if(fd < 0 )
+    {
+        funz_error("Error opening file\n",0);
+    }   
+	lock.l_type = F_WRLCK;
+	fcntl(fd,F_SETLKW,&lock);
+       
     char*ptr;
     dim = strtol(buff,&ptr,10);
     printf("Ho ricevuto dim in char %s\n",buff);
     printf("dim file ricevuta %zu\n",dim);
     puts("entro nel while");
-    printf("La dim del buffer è %d\n",sizeof(buff));
+    printf("La dim del buffer è %ld\n",sizeof(buff));
     
     while(tmp != dim)
     {	
 		puts("sto per leggere\n");
         nread = recvfrom(sockfd,buff,sizeof(buff),0,serv_addr,sock_len);
         if(nread < 0)
+        {
+			lock.l_type = F_UNLCK;
+			fcntl(fd,F_SETLKW,&lock);
 			funz_error("Error in recvfrom\n",0);
-	
+		}
         printf("Ho ricevuto cose %s\n",buff);
         printf("Ho letto nread = %d \n",nread);
         int w = write(fd,buff,nread);
         if(w < 0 )
+		{
+			lock.l_type = F_UNLCK;
+			fcntl(fd,F_SETLKW,&lock);
 			funz_error("Error writing on file\n",0);
+		}
 		tmp += nread;
     }
+    puts("###########################################################");
     printf("File ricevuto\n");
+    puts("###########################################################");
+    lock.l_type = F_UNLCK;
+	fcntl(fd,F_SETLKW,&lock);
     close(fd);
     exit(EXIT_SUCCESS);
 	
@@ -87,8 +115,10 @@ void post_funz(char*command,char*filename,struct sockaddr* serv_addr,size_t dim_
 	size_t fsize;
 	struct stat stat_buf;
 	int rcread = 0,rcsend = 0, bytes_sent = 0;
-	unsigned int tmpread = 0,totsend = 0;	
+	unsigned int tmpread = 0,totsend = 0;
+	struct flock lock;
 	
+	memset(&lock,0,sizeof(lock));
 	strcpy(buff,command);
 	printf("invio il comando -%s-\n",buff);
 	
@@ -101,7 +131,10 @@ void post_funz(char*command,char*filename,struct sockaddr* serv_addr,size_t dim_
     fd = open(filename,O_RDONLY);
 	if(fd == -1)
 		funz_error("Impossibile aprire \n",0);	
-
+	
+	lock.l_type = F_RDLCK;
+	fcntl(fd,F_SETLKW,&lock);
+	
 	fstat(fd,&stat_buf);
 	fsize = stat_buf.st_size;
 	sprintf(buff,"%zu",fsize);
@@ -110,15 +143,22 @@ void post_funz(char*command,char*filename,struct sockaddr* serv_addr,size_t dim_
 	bytes_sent = sendto(sockfd, buff,sizeof(buff),0,serv_addr,dim_serv);/*invio la dim del file*/
 	puts("dim file inviata\n");
 	if(bytes_sent == -1)
+	{
+		lock.l_type = F_UNLCK;
+		fcntl(fd,F_SETLKW,&lock);
 		funz_error("Errore durante l'invio della dimensione del file\n",0);
-	
+	}
 	
 	while(totsend != fsize)
 	{
 		rcread = read(fd,buff,sizeof(buff));
 		printf("ho letto %d bytes\n",rcread);
 		if(rcread == -1)
+		{
+			lock.l_type = F_UNLCK;
+			fcntl(fd,F_SETLKW,&lock);
 			funz_error("Errore lettura file",1);
+		}
 		tmpread += rcread;
 		printf("contenuto %s\n",buff);
 		/* scrivo su file locale */ 
@@ -126,15 +166,27 @@ void post_funz(char*command,char*filename,struct sockaddr* serv_addr,size_t dim_
 			rcsend = sendto(sockfd,buff,sizeof(buff), 0,serv_addr,dim_serv);
 		else
 			rcsend = sendto(sockfd,buff,fsize-totsend, 0,serv_addr,dim_serv);				
-		if(rcsend == -1)	
+		if(rcsend == -1)
+		{	
+			lock.l_type = F_UNLCK;
+			fcntl(fd,F_SETLKW,&lock);
 			funz_error("Errore durante l'invio del file\n",1);
-		totsend += rcsend;
-			
+		}
+		totsend += rcsend;	
 	}
 	
 	if(totsend != stat_buf.st_size)
-		funz_error("Trasferimento incompleto\n",0);
-	puts("File inviato correttamente\n");
+	{
+		lock.l_type = F_UNLCK;
+		fcntl(fd,F_SETLKW,&lock);
+		funz_error("\t>Trasferimento incompleto\n",0);
+		
+	}
+	puts("###########################################################");
+	puts("\t>File inviato correttamente\n");
+	puts("###########################################################");
+	lock.l_type = F_UNLCK;
+	fcntl(fd,F_SETLKW,&lock);
 	close(fd);
 	exit(EXIT_SUCCESS);
 }
@@ -145,6 +197,7 @@ void list_funz(char*command,struct sockaddr*serv_addr,socklen_t* sock_len,size_t
 	int nread = 0,fd;
 	unsigned int tmp = 0;
 	size_t dim;
+	struct flock lock;
 	
 	puts("sono dentro funzione list");
 	
@@ -159,27 +212,62 @@ void list_funz(char*command,struct sockaddr*serv_addr,socklen_t* sock_len,size_t
 	int r = recvfrom(sockfd,buff,sizeof(buff),0,serv_addr,sock_len);
     if(r == -1)
         funz_error("Dimensione non arrivata\n",0);
+    if(strcasecmp(buff,"NO_ELEM") == 0)
+    {
+		puts("###########################################################");
+		printf("NO_ELEM, il server attualmente è vuoto\n");
+		puts("###########################################################");
+		exit(EXIT_SUCCESS);	
+	}
+	
     dim = atoi(buff);
     printf("Ho ricevuto dim in char %s\n",buff);
     printf("dim file ricevuta %zu\n",dim);
     puts("entro nel while");
     fd = open("inServer",O_CREAT | O_WRONLY,0644);
+    if(fd == -1)
+		funz_error("Error opening file\n",1);
+	lock.l_type = F_WRLCK;
+	fcntl(fd,F_SETLKW,&lock);
     while(tmp != dim)
     {	
 		puts("sto per leggere\n");
         nread = recvfrom(sockfd,buff,sizeof(buff),0,serv_addr,sock_len);
         if(nread < 0)
+        {
+			lock.l_type = F_UNLCK;
+			fcntl(fd,F_SETLKW,&lock);
 			funz_error("Error in recvfrom\n",0);
-	
+		}
         printf("Ho ricevuto cose %s\n",buff);
         printf("Ho letto nread = %d \n",nread);
         int w = write(fd,buff,nread);
         if(w < 0 )
+        {
+			lock.l_type = F_UNLCK;
+			fcntl(fd,F_SETLKW,&lock);
 			funz_error("Error writing on file\n",0);
+		}
 		tmp += nread;
     }
-    printf("File ricevuto\n");
-    close(fd);
+    printf("File ricevuto con successo\n");
+    lock.l_type = F_UNLCK;
+	fcntl(fd,F_SETLKW,&lock);
+	close(fd);
+	
+	FILE*fil = fopen("inServer","r");
+    puts("###########################################################");
+	while(!feof(fil))
+	{
+		char buff[1024];
+		char*cc = fgets(buff,sizeof(buff),fil);
+		if(cc == NULL)
+			funz_error("Error reading file\n",0);
+		printf("\t> %s \n",buff);
+	}
+    puts("###########################################################");
+    
+    fclose(fil);
 	exit(EXIT_SUCCESS);
 	
 }

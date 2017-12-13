@@ -2,4 +2,4 @@
 Al server è stato aggiunto un semaforo IPC V al momento non utilizzato, ma da implementare ci saranno i lock su i file
 Viene utilizzata la struttura sigaction per inviare un messaggio tra i processi del server per evitare errori nella ricezione dei dati, così che il processo che attende i comandi non interferisca con la lettura di file durante l’esecuzione del metodo “post”
 continua ad esserci il dramma che i file musicali li invia male, perde più di 10 mb di estenzione
-
+il codice ha zero warnings

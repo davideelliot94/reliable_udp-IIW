@@ -37,8 +37,10 @@
 #include <sys/stat.h>
 #include <dirent.h>
 #include <sys/ipc.h>
+#include <sys/wait.h>
 #include <sys/sem.h>
 #include <signal.h>
+
 
 #define SERV_PORT 5193
 #define MAXLINE 1024
@@ -57,7 +59,9 @@ static void pSigHandler(int signo){
 
 void funz_error(char*mexerr)
 {	
+	puts("###########################################################");
 	perror(mexerr);
+	puts("###########################################################");
 	exit(-1);	
 }
 
@@ -78,7 +82,11 @@ void get_funz(char*filename,struct sockaddr_in* addr,int sockfds,size_t addrsize
 		
 		fd = open(filename,O_RDONLY);
 		if(fd == -1)
+		{
+			char*err = "BAD_REQUEST";
+			sendto(sockfds,err,sizeof(err),0,(struct sockaddr*)addr,addrsize);
 			funz_error("Impossibile aprire \n");	
+		}
 		fcntl(fd,F_SETLKW,&lock);
 
 		fstat(fd,&stat_buf);
@@ -124,11 +132,16 @@ void get_funz(char*filename,struct sockaddr_in* addr,int sockfds,size_t addrsize
 		{
 			lock.l_type = F_UNLCK;
 			fcntl(fd,F_SETLKW, &lock);
-			funz_error("Trasferimento incompleto\n");
+			puts("###########################################################");
+			funz_error("\t>Trasferimento incompleto\n");
+			puts("###########################################################");
 		}
 		lock.l_type = F_UNLCK;
 		fcntl(fd,F_SETLKW,&lock);
 		close(fd);
+		puts("###########################################################");
+		puts("\t>File trasferito con successo\n");
+		puts("###########################################################");
 		exit(EXIT_SUCCESS);
 }
 		
@@ -144,6 +157,7 @@ void list_funz(struct sockaddr_in* addr,int sockfds,size_t addrsize)
 	struct flock lock;
 	int fd,bytes_sent = 0,rcread = 0, totsend = 0, rcsend = 0;
 	unsigned int tmpread = 0;
+	int count_elem = 0;
 	size_t fsize;
 	puts("ricevuto comando LIST");
 
@@ -161,7 +175,12 @@ void list_funz(struct sockaddr_in* addr,int sockfds,size_t addrsize)
 	
 	while( ( dir_p = readdir(dp) ) != NULL )
 	{
-			
+		if(strcasecmp(dir_p -> d_name,".") == 0 || strcasecmp(dir_p -> d_name,"..") == 0 || strcasecmp(dir_p -> d_name,"listafile") == 0)
+		{
+			continue;
+		}
+		count_elem++;
+		printf("\t%s \n",dir_p -> d_name);
 		int w = write(fd,dir_p -> d_name,strlen(dir_p -> d_name));
 		if(w < 0 )
 		{
@@ -175,10 +194,24 @@ void list_funz(struct sockaddr_in* addr,int sockfds,size_t addrsize)
 			lock.l_type = F_UNLCK;
 			fcntl(fd,F_SETLKW,&lock);
 			funz_error("Error writing on file\n");
-		}	
+		}
+			
 	}
 	closedir(dp);
-
+	
+	if(count_elem == 0)
+	{
+		lock.l_type = F_UNLCK;
+		fcntl(fd,F_SETLKW,&lock);
+		close(fd);
+		char*err = "NO_ELEM";
+		sendto(sockfds,err,sizeof(err),0,(struct sockaddr*)addr,addrsize);
+		puts("###########################################################");
+		printf("\t>NO_ELEM, il server attualmente è vuoto\n");
+		puts("###########################################################");
+		exit(EXIT_SUCCESS);
+	}
+	
 	fstat(fd,&stat_buf);
 	fsize = stat_buf.st_size;
 	sprintf(buff,"%zu",fsize);
@@ -235,6 +268,9 @@ void list_funz(struct sockaddr_in* addr,int sockfds,size_t addrsize)
 	lock.l_type = F_UNLCK;
 	fcntl(fd,F_SETLKW,&lock);
 	close(fd);	
+	puts("###########################################################");
+	puts("\t>Comando eseguito con successo\n");
+	puts("###########################################################");
 	exit(EXIT_SUCCESS);
 		
 }
@@ -289,7 +325,9 @@ void post_funz(char*filename,struct sockaddr_in* addr,socklen_t * dimaddr,int so
 			}
 			tmp += nread;
 		}
-		printf("File ricevuto\n");
+		puts("###########################################################");
+		printf("\t>File ricevuto\n");
+		puts("###########################################################");
 		kill(getppid(),SIGUSR1);
 		lock.l_type = F_UNLCK;
 		fcntl(fd,F_SETLKW,&lock);
@@ -408,7 +446,7 @@ int main(int argc, char **argv)
 		/*il server attende che il proc figlio abbia finito le comunicazioni in lettura
 		 * altrimenti rischia di sovrapporsi */
 		if(pid > 0)
-			waitpid(pid);
+			waitpid(pid,NULL,WUNTRACED); // POTREBBE DARE ERRORI ATTENZIONE
 	}
 	argc = argc;
 	argv = argv;
