@@ -12,7 +12,10 @@
 #include <stdint.h>
 #include <inttypes.h>
 #include <dirent.h>
+
+#define MAXWIN 90
 #define SERV_PORT 5193
+#define MAXLINE 1024
 
 void funz_error(char*mexerr,int type)
 {	
@@ -36,10 +39,11 @@ void get_funz(char*command,char*filename,struct sockaddr* serv_addr,socklen_t* s
 {
 	int nread = 0;
 	int tmp = 0;
-	char buff[1024] = {};
+	char buff[MAXLINE] = {};
 	int fd ;
 	long int dim;
 	struct flock lock;
+	
 	
 	memset(&lock,0,sizeof(lock));
 	strcpy(buff,command);
@@ -77,8 +81,10 @@ void get_funz(char*command,char*filename,struct sockaddr* serv_addr,socklen_t* s
     puts("entro nel while");
     printf("La dim del buffer è %ld\n",sizeof(buff));
     
+
     while(tmp != dim)
     {	
+		
 		puts("sto per leggere\n");
         nread = recvfrom(sockfd,buff,sizeof(buff),0,serv_addr,sock_len);
         if(nread < 0)
@@ -97,6 +103,7 @@ void get_funz(char*command,char*filename,struct sockaddr* serv_addr,socklen_t* s
 			funz_error("Error writing on file\n",0);
 		}
 		tmp += nread;
+		sendto(sockfd,"ACK_RECEIVED",sizeof("ACK_RECEIVED"),0,serv_addr,dim_serv);
     }
     puts("###########################################################");
     printf("File ricevuto\n");
@@ -108,15 +115,16 @@ void get_funz(char*command,char*filename,struct sockaddr* serv_addr,socklen_t* s
 	
 }
 
-void post_funz(char*command,char*filename,struct sockaddr* serv_addr,size_t dim_serv,int sockfd)
+void post_funz(char*command,char*filename,struct sockaddr* serv_addr,size_t dim_serv,int sockfd,socklen_t*dimaddr)
 {
-	char buff[1024] = {};
+	char buff[MAXLINE] = {};
 	int fd ;
 	size_t fsize;
 	struct stat stat_buf;
 	int rcread = 0,rcsend = 0, bytes_sent = 0;
 	unsigned int tmpread = 0,totsend = 0;
 	struct flock lock;
+	int nsent = 0;
 	
 	memset(&lock,0,sizeof(lock));
 	strcpy(buff,command);
@@ -148,9 +156,24 @@ void post_funz(char*command,char*filename,struct sockaddr* serv_addr,size_t dim_
 		fcntl(fd,F_SETLKW,&lock);
 		funz_error("Errore durante l'invio della dimensione del file\n",0);
 	}
-	
+	int count = 0;
 	while(totsend != fsize)
 	{
+		if(count%MAXWIN == 0 && count != 0)
+		{
+				int reccount = 0;
+				while(reccount != nsent)
+				{
+					int ack = recvfrom(sockfd,buff,sizeof(buff),0,serv_addr,dimaddr);
+					if(ack == 0)
+						puts("Ack non arrivato");
+					else
+						printf("Ack -> %d ricevuto \n",reccount);
+					reccount++;
+				}	
+				nsent = 0;
+					
+		}
 		rcread = read(fd,buff,sizeof(buff));
 		printf("ho letto %d bytes\n",rcread);
 		if(rcread == -1)
@@ -173,7 +196,21 @@ void post_funz(char*command,char*filename,struct sockaddr* serv_addr,size_t dim_
 			funz_error("Errore durante l'invio del file\n",1);
 		}
 		totsend += rcsend;	
+		count++;
+		nsent++;
 	}
+	
+	int reccount = 0;
+	while(reccount != nsent)
+	{
+		int ack = recvfrom(sockfd,buff,sizeof(buff),0,serv_addr,dimaddr);
+		if(ack == 0)
+			puts("Ack non arrivato");
+		else
+			printf("Ack -> %d ricevuto \n",reccount);
+		reccount++;
+	}	
+	nsent = 0;
 	
 	if(totsend != stat_buf.st_size)
 	{
@@ -193,7 +230,7 @@ void post_funz(char*command,char*filename,struct sockaddr* serv_addr,size_t dim_
 
 void list_funz(char*command,struct sockaddr*serv_addr,socklen_t* sock_len,size_t dim_serv,int sockfd)
 {
-	char buff[1024] = {};
+	char buff[MAXLINE] = {};
 	int nread = 0,fd;
 	unsigned int tmp = 0;
 	size_t dim;
@@ -259,7 +296,7 @@ void list_funz(char*command,struct sockaddr*serv_addr,socklen_t* sock_len,size_t
     puts("###########################################################");
 	while(!feof(fil))
 	{
-		char buff[1024];
+		char buff[MAXLINE];
 		char*cc = fgets(buff,sizeof(buff),fil);
 		if(cc == NULL)
 			funz_error("Error reading file\n",0);
@@ -300,9 +337,9 @@ int main(int argc, char *argv[])
 	{
 		
 		int i = 0;
-		char line[1024] = {};
-		char command[1024] = {};
-		char filename[1024] = {};
+		char line[MAXLINE] = {};
+		char command[MAXLINE] = {};
+		char filename[MAXLINE] = {};
 		char* c = fgets(line,1024,stdin);
 		pid_t pid = fork();
 		if(pid == 0)
@@ -344,7 +381,7 @@ int main(int argc, char *argv[])
 			if(strcasecmp(command,"POST") == 0)
 			{
 					puts("CHILD PROCESS, EXEGUTING POST COMMAND!!!!");
-					post_funz(line,filename,(struct sockaddr*)&servaddr,sizeof(servaddr),sockfd);
+					post_funz(line,filename,(struct sockaddr*)&servaddr,sizeof(servaddr),sockfd,&dimaddr);
 
 			}
 			if(strcasecmp(command,"LIST") == 0)

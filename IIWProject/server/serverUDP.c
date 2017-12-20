@@ -41,7 +41,7 @@
 #include <sys/sem.h>
 #include <signal.h>
 
-#define MAXWIN 99
+#define MAXWIN 90
 #define SERV_PORT 5193
 #define MAXLINE 1024
 
@@ -65,7 +65,7 @@ void funz_error(char*mexerr)
 	exit(-1);	
 }
 
-void get_funz(char*filename,struct sockaddr_in* addr,int sockfds,size_t addrsize)
+void get_funz(char*filename,struct sockaddr_in* addr,int sockfds,size_t addrsize,socklen_t * dimaddr)
 {
 		char buff[MAXLINE] = {};
 		struct stat stat_buf;
@@ -75,6 +75,7 @@ void get_funz(char*filename,struct sockaddr_in* addr,int sockfds,size_t addrsize
 		size_t fsize;
 		memset(&lock,0,sizeof(lock));
 		lock.l_type = F_RDLCK;
+		int nsent = 0;
 		
 		fprintf(stderr,"Rievuta richiesta di inviare il file: '%s'\n",filename);
 
@@ -106,9 +107,21 @@ void get_funz(char*filename,struct sockaddr_in* addr,int sockfds,size_t addrsize
 		while(totsend != fsize)
 		{	
 			
-			if(count%MAXWIN == 0)
-				usleep(100000);
-				
+			if(count%MAXWIN == 0 && count != 0)
+			{
+				int reccount = 0;
+				while(reccount != nsent)
+				{
+					int ack = recvfrom(sockfds,buff,sizeof(buff),0,(struct sockaddr*)addr,dimaddr);
+					if(ack == 0)
+						puts("Ack non arrivato");
+					else
+						printf("Ack -> %d ricevuto \n",reccount);
+					reccount++;
+				}	
+				nsent = 0;
+					
+			}	
 			rcread = read(fd,buff,sizeof(buff));
 			printf("ho letto %d bytes\n",rcread);
 			if(rcread == -1)
@@ -131,7 +144,23 @@ void get_funz(char*filename,struct sockaddr_in* addr,int sockfds,size_t addrsize
 			}
 			totsend += rcsend;
 			count++;
+			nsent++;		
+		
 		}
+		
+		
+		int reccount = 0;
+		while(reccount != nsent)
+		{
+			int ack = recvfrom(sockfds,buff,sizeof(buff),0,(struct sockaddr*)addr,dimaddr);
+			if(ack == 0)
+				puts("Ack non arrivato");
+			else
+				printf("Ack -> %d ricevuto \n",reccount);
+			reccount++;
+		}	
+		nsent = 0;
+		
 		printf("\n\ntnpread è %d\n\n mentre st_size è %zu\n\n ed totsend è %d \n\n",tmpread,stat_buf.st_size,totsend);	
 		if(totsend != stat_buf.st_size)
 		{
@@ -141,9 +170,13 @@ void get_funz(char*filename,struct sockaddr_in* addr,int sockfds,size_t addrsize
 			funz_error("\t>Trasferimento incompleto\n");
 			puts("###########################################################");
 		}
+		
+		
+		
 		lock.l_type = F_UNLCK;
 		fcntl(fd,F_SETLKW,&lock);
 		close(fd);
+		kill(getppid(),SIGUSR1);
 		puts("###########################################################");
 		puts("\t>File trasferito con successo\n");
 		puts("###########################################################");
@@ -329,6 +362,7 @@ void post_funz(char*filename,struct sockaddr_in* addr,socklen_t * dimaddr,int so
 				funz_error("Error writing on file\n");
 			}
 			tmp += nread;
+			sendto(sockfds,"ACK_RECEIVED",sizeof("ACK_RECEIVED"),0,(struct sockaddr*)addr,sizeof(addr));
 		}
 		puts("###########################################################");
 		printf("\t>File ricevuto\n");
@@ -426,7 +460,7 @@ int main(int argc, char **argv)
 			{
 				char * ip_address = inet_ntoa(cli_addr.sin_addr);
 				printf("Ricevuta richiesta da client con IP: %s\n", ip_address);
-				get_funz(filename,&addr,sockfds,sizeof(addr));
+				get_funz(filename,&addr,sockfds,sizeof(addr),&dimaddr);
 			}
 			/* chiamata a funzione list*/
 			if(strcasecmp(command,"LIST") == 0)
