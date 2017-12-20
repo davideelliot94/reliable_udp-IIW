@@ -41,7 +41,7 @@
 #include <sys/sem.h>
 #include <signal.h>
 
-
+#define MAXWIN 99
 #define SERV_PORT 5193
 #define MAXLINE 1024
 
@@ -67,7 +67,7 @@ void funz_error(char*mexerr)
 
 void get_funz(char*filename,struct sockaddr_in* addr,int sockfds,size_t addrsize)
 {
-		char buff[1024] = {};
+		char buff[MAXLINE] = {};
 		struct stat stat_buf;
 		int fd,bytes_sent = 0,rcsend = 0,rcread = 0;
 		unsigned int tmpread = 0,totsend = 0;
@@ -102,8 +102,13 @@ void get_funz(char*filename,struct sockaddr_in* addr,int sockfds,size_t addrsize
 			fcntl(fd,F_SETLKW, &lock);
 			funz_error("Errore durante l'invio della dimensione del file\n");
 		}
+		int count = 0;
 		while(totsend != fsize)
-		{
+		{	
+			
+			if(count%MAXWIN == 0)
+				usleep(100000);
+				
 			rcread = read(fd,buff,sizeof(buff));
 			printf("ho letto %d bytes\n",rcread);
 			if(rcread == -1)
@@ -125,7 +130,7 @@ void get_funz(char*filename,struct sockaddr_in* addr,int sockfds,size_t addrsize
 				funz_error("Errore durante l'invio del file\n");
 			}
 			totsend += rcsend;
-			
+			count++;
 		}
 		printf("\n\ntnpread è %d\n\n mentre st_size è %zu\n\n ed totsend è %d \n\n",tmpread,stat_buf.st_size,totsend);	
 		if(totsend != stat_buf.st_size)
@@ -151,7 +156,7 @@ void get_funz(char*filename,struct sockaddr_in* addr,int sockfds,size_t addrsize
 void list_funz(struct sockaddr_in* addr,int sockfds,size_t addrsize)
 {
 	
-	char buff[1024] = {};
+	char buff[MAXLINE] = {};
 	struct stat stat_buf;
 	struct dirent *dir_p;
 	struct flock lock;
@@ -278,7 +283,7 @@ void list_funz(struct sockaddr_in* addr,int sockfds,size_t addrsize)
 
 void post_funz(char*filename,struct sockaddr_in* addr,socklen_t * dimaddr,int sockfds)
 {
-		char buff[1024] = {};
+		char buff[MAXLINE] = {};
 		int fd,nread = 0;
 		int tmp = 0;
 		long int dim;
@@ -370,7 +375,7 @@ int main(int argc, char **argv)
 		
 		/* lettura comando */
 		
-		char line[1024] = {};
+		char line[MAXLINE] = {};
 		puts("attendo di ricevere il comando");
 		int b = recvfrom(sockfds,line,sizeof(line),0,(struct sockaddr*)&addr,&dimaddr);
 		if(b <= 0 )
@@ -382,8 +387,8 @@ int main(int argc, char **argv)
 		if(pid == 0)
 		{
 			int i = 0;
-			char command[1024] = {};
-			char filename[1024] = {};
+			char command[MAXLINE] = {};
+			char filename[MAXLINE] = {};
 			
 			while(1)
 			{
