@@ -1,7 +1,5 @@
 server
 testgetpdf.pdf
-testpostpdf.pdf
 testgetimage.jpg
-waw.wav
 serverUDP.c
-testpostimage.jpg
+testgetvideo.mp4

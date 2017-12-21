@@ -2,6 +2,6 @@
 Al server è stato aggiunto un semaforo IPC V al momento non utilizzato, ma da implementare ci saranno i lock su i file
 Viene utilizzata la struttura sigaction per inviare un messaggio tra i processi del server per evitare errori nella ricezione dei dati, così che il processo che attende i comandi non interferisca con la lettura di file durante l’esecuzione del metodo “post”
 ilserver invia file di qualsiasi dimensione al client e viceversa
-nei metodi get e post è implementata con successo una finestra di 90 vengono inviati e ricevuti ack, ma ancora non è gestita la situazione di perdita
-Non è gestita la bufferizzazione di ciò che è inviato tramite numeri di sequenza
+nei metodi get e post e list è implementata con successo una finestra di 90 vengono inviati e ricevuti ack, ma ancora non è gestita la situazione di perdita
+Non è gestita la bufferizzazione di ciò che è inviato tramite numeri di sequenza,ma almeno si possono riconoscere invia teorica i pezzi mancanti
 il codice ha zero warnings

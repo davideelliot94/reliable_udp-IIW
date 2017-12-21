@@ -108,7 +108,6 @@ void get_funz(char*filename,struct sockaddr_in* addr,int sockfds,size_t addrsize
 		int count = 0;
 		while(totsend != fsize)
 		{	
-			
 			if(count%MAXWIN == 0 && count != 0)
 			{
 				int reccount = 0;
@@ -118,12 +117,13 @@ void get_funz(char*filename,struct sockaddr_in* addr,int sockfds,size_t addrsize
 					if(ack == 0)
 						puts("Ack non arrivato");
 					else
-						printf("Ack -> %d ricevuto \n",reccount);
+						printf("Ack -> %d ricevuto \n",atoi(buff));
 					reccount++;
 				}	
 				nsent = 0;
 					
 			}
+				
 				
 			rcread = read(fd,buff,sizeof(buff));
 			printf("ho letto %d bytes\n",rcread);
@@ -158,7 +158,7 @@ void get_funz(char*filename,struct sockaddr_in* addr,int sockfds,size_t addrsize
 			if(ack == 0)
 				puts("Ack non arrivato");
 			else
-				printf("Ack -> %d ricevuto \n",reccount);
+				printf("Ack -> %d ricevuto \n",atoi(buff));
 			reccount++;
 		}	
 		nsent = 0;
@@ -188,7 +188,7 @@ void get_funz(char*filename,struct sockaddr_in* addr,int sockfds,size_t addrsize
 
 
 
-void list_funz(struct sockaddr_in* addr,int sockfds,size_t addrsize)
+void list_funz(struct sockaddr_in* addr,int sockfds,size_t addrsize,socklen_t * dimaddr)
 {
 	
 	char buff[MAXLINE] = {};
@@ -199,6 +199,7 @@ void list_funz(struct sockaddr_in* addr,int sockfds,size_t addrsize)
 	unsigned int tmpread = 0;
 	int count_elem = 0;
 	size_t fsize;
+	int nsent = 0;
 	puts("ricevuto comando LIST");
 
 	memset(&lock,0,sizeof(lock));
@@ -207,6 +208,7 @@ void list_funz(struct sockaddr_in* addr,int sockfds,size_t addrsize)
 	
 	if ( dp == NULL )
 		exit(1);
+		
 	fd = open("listafile",O_CREAT | O_WRONLY, 0644);
 	if(fd == -1)
 		funz_error("Error opening file\n");
@@ -274,8 +276,26 @@ void list_funz(struct sockaddr_in* addr,int sockfds,size_t addrsize)
 	lock.l_type = F_RDLCK;
 	fcntl(fd,F_SETLKW,&lock);
 	
+	int count = 0;
 	while(tmpread != fsize)
 	{
+		
+		if(count%MAXWIN == 0 && count != 0)
+		{
+			int reccount = 0;
+			while(reccount != nsent)
+			{
+				int ack = recvfrom(sockfds,buff,sizeof(buff),0,(struct sockaddr*)addr,dimaddr);
+				if(ack == 0)
+					puts("Ack non arrivato");
+				else
+					printf("Ack -> %d ricevuto \n",atoi(buff));
+				reccount++;
+			}	
+			nsent = 0;
+				
+		}
+		
 		rcread = read(fd,buff,sizeof(buff));
 		printf("ho letto %d bytes\n",rcread);
 		if(rcread == -1)
@@ -297,8 +317,23 @@ void list_funz(struct sockaddr_in* addr,int sockfds,size_t addrsize)
 			funz_error("Errore durante l'invio del file\n");
 		}
 		totsend += rcsend;
+		count++;
+		nsent++;
 		
 	}
+	
+	int reccount = 0;
+	while(reccount != nsent)
+	{
+		int ack = recvfrom(sockfds,buff,sizeof(buff),0,(struct sockaddr*)addr,dimaddr);
+		if(ack == 0)
+			puts("Ack non arrivato");
+		else
+			printf("Ack -> %d ricevuto \n",atoi(buff));
+		reccount++;
+	}	
+	nsent = 0;
+	
 	if(totsend != stat_buf.st_size)
 	{
 		lock.l_type = F_UNLCK;
@@ -344,6 +379,7 @@ void post_funz(char*filename,struct sockaddr_in* addr,socklen_t * dimaddr,int so
 		printf("dim file ricevuta %zu\n",dim);
 		puts("entro nel while");
 		
+		int count = 0;
 		while(tmp != dim)
 		{	
 			puts("sto per leggere\n");
@@ -364,7 +400,9 @@ void post_funz(char*filename,struct sockaddr_in* addr,socklen_t * dimaddr,int so
 				funz_error("Error writing on file\n");
 			}
 			tmp += nread;
-			sendto(sockfds,"ACK_RECEIVED",sizeof("ACK_RECEIVED"),0,(struct sockaddr*)addr,addrsize);
+			sprintf(buff,"%d",count);
+			sendto(sockfds,buff,sizeof(buff),0,(struct sockaddr*)addr,addrsize);
+			count++;
 		}
 		puts("###########################################################");
 		printf("\t>File ricevuto\n");
@@ -469,7 +507,7 @@ int main(int argc, char **argv)
 			{   
 				char * ip_address = inet_ntoa(cli_addr.sin_addr);
 				printf("Ricevuta richiesta da client con IP: %s\n", ip_address);
-				list_funz(&addr,sockfds,sizeof(addr));
+				list_funz(&addr,sockfds,sizeof(addr),&dimaddr);
 			}
 			/* chiamata a funzione post */
 			if(strcasecmp(command,"POST") == 0)

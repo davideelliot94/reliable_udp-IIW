@@ -81,7 +81,7 @@ void get_funz(char*command,char*filename,struct sockaddr* serv_addr,socklen_t* s
     puts("entro nel while");
     printf("La dim del buffer è %ld\n",sizeof(buff));
     
-
+	int count = 0;
     while(tmp != dim)
     {	
 		
@@ -103,7 +103,9 @@ void get_funz(char*command,char*filename,struct sockaddr* serv_addr,socklen_t* s
 			funz_error("Error writing on file\n",0);
 		}
 		tmp += nread;
-		sendto(sockfd,"ACK_RECEIVED",sizeof("ACK_RECEIVED"),0,serv_addr,dim_serv);
+		sprintf(buff,"%d",count);
+		sendto(sockfd,buff,sizeof(buff),0,serv_addr,dim_serv);
+		count++;
     }
     puts("###########################################################");
     printf("File ricevuto\n");
@@ -169,7 +171,7 @@ void post_funz(char*command,char*filename,struct sockaddr* serv_addr,size_t dim_
 					if(ack == 0)
 						puts("Ack non arrivato");
 					else
-						printf("Ack -> %d ricevuto \n",reccount);
+						printf("Ack -> %d ricevuto \n",atoi(buff));
 					reccount++;
 				}	
 				nsent = 0;
@@ -209,7 +211,7 @@ void post_funz(char*command,char*filename,struct sockaddr* serv_addr,size_t dim_
 		if(ack == 0)
 			puts("Ack non arrivato");
 		else
-			printf("Ack -> %d ricevuto \n",reccount);
+			printf("Ack -> %d ricevuto \n",atoi(buff));
 		reccount++;
 	}	
 	nsent = 0;
@@ -268,6 +270,8 @@ void list_funz(char*command,struct sockaddr*serv_addr,socklen_t* sock_len,size_t
 		funz_error("Error opening file\n",1);
 	lock.l_type = F_WRLCK;
 	fcntl(fd,F_SETLKW,&lock);
+	
+	int count = 0;
     while(tmp != dim)
     {	
 		puts("sto per leggere\n");
@@ -288,6 +292,10 @@ void list_funz(char*command,struct sockaddr*serv_addr,socklen_t* sock_len,size_t
 			funz_error("Error writing on file\n",0);
 		}
 		tmp += nread;
+		sprintf(buff,"%d",count);
+		sendto(sockfd,buff,sizeof(buff),0,serv_addr,dim_serv);
+		count++;
+		
     }
     printf("File ricevuto con successo\n");
     lock.l_type = F_UNLCK;
@@ -296,12 +304,14 @@ void list_funz(char*command,struct sockaddr*serv_addr,socklen_t* sock_len,size_t
 	
 	FILE*fil = fopen("inServer","r");
     puts("###########################################################");
-	while(!feof(fil))
+	while(1)
 	{
 		char buff[MAXLINE];
 		char*cc = fgets(buff,sizeof(buff),fil);
-		if(cc == NULL)
+		if(cc == NULL && !feof(fil))
 			funz_error("Error reading file\n",0);
+		if(cc == NULL && feof(fil))
+			break;
 		printf("\t> %s \n",buff);
 	}
     puts("###########################################################");
