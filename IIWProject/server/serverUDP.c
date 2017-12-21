@@ -103,6 +103,8 @@ void get_funz(char*filename,struct sockaddr_in* addr,int sockfds,size_t addrsize
 			fcntl(fd,F_SETLKW, &lock);
 			funz_error("Errore durante l'invio della dimensione del file\n");
 		}
+		
+		
 		int count = 0;
 		while(totsend != fsize)
 		{	
@@ -121,7 +123,8 @@ void get_funz(char*filename,struct sockaddr_in* addr,int sockfds,size_t addrsize
 				}	
 				nsent = 0;
 					
-			}	
+			}
+				
 			rcread = read(fd,buff,sizeof(buff));
 			printf("ho letto %d bytes\n",rcread);
 			if(rcread == -1)
@@ -147,7 +150,6 @@ void get_funz(char*filename,struct sockaddr_in* addr,int sockfds,size_t addrsize
 			nsent++;		
 		
 		}
-		
 		
 		int reccount = 0;
 		while(reccount != nsent)
@@ -314,7 +316,7 @@ void list_funz(struct sockaddr_in* addr,int sockfds,size_t addrsize)
 }
 
 
-void post_funz(char*filename,struct sockaddr_in* addr,socklen_t * dimaddr,int sockfds)
+void post_funz(char*filename,struct sockaddr_in* addr,socklen_t * dimaddr,int sockfds,size_t addrsize)
 {
 		char buff[MAXLINE] = {};
 		int fd,nread = 0;
@@ -362,7 +364,7 @@ void post_funz(char*filename,struct sockaddr_in* addr,socklen_t * dimaddr,int so
 				funz_error("Error writing on file\n");
 			}
 			tmp += nread;
-			sendto(sockfds,"ACK_RECEIVED",sizeof("ACK_RECEIVED"),0,(struct sockaddr*)addr,sizeof(addr));
+			sendto(sockfds,"ACK_RECEIVED",sizeof("ACK_RECEIVED"),0,(struct sockaddr*)addr,addrsize);
 		}
 		puts("###########################################################");
 		printf("\t>File ricevuto\n");
@@ -475,7 +477,7 @@ int main(int argc, char **argv)
 				
 				char * ip_address = inet_ntoa(cli_addr.sin_addr);
 				printf("Ricevuta richiesta da client con IP: %s\n", ip_address);
-				post_funz(filename,&addr,&dimaddr,sockfds);
+				post_funz(filename,&addr,&dimaddr,sockfds,sizeof(addr));
 				
 			}
 			

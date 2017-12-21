@@ -156,6 +156,7 @@ void post_funz(char*command,char*filename,struct sockaddr* serv_addr,size_t dim_
 		fcntl(fd,F_SETLKW,&lock);
 		funz_error("Errore durante l'invio della dimensione del file\n",0);
 	}
+	
 	int count = 0;
 	while(totsend != fsize)
 	{
@@ -174,6 +175,7 @@ void post_funz(char*command,char*filename,struct sockaddr* serv_addr,size_t dim_
 				nsent = 0;
 					
 		}
+		
 		rcread = read(fd,buff,sizeof(buff));
 		printf("ho letto %d bytes\n",rcread);
 		if(rcread == -1)
